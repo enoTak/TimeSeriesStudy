@@ -1,0 +1,239 @@
+---
+title: "KalmanFilterStudy"
+author: "Takumi Enomoto"
+date: "7/12/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Anlysis for Nile
+Trial
+
+## Pre-analysis
+
+### Time series plot
+```{r plot}
+plot(Nile, main = "Time series plot")
+```
+
+
+### Histgram
+```{r hist}
+hist(Nile, main="histgram", xlab="values")
+```
+
+
+### Summary
+```{r summary}
+summary(Nile)
+```
+
+
+### autocorrelations
+```{r acf}
+par(mar=c(4,4,3,1))
+acf(Nile, main="auto correltion")
+```
+
+
+### Spectual analysis
+``` {r spectal}
+source("plot_spectrum.R")
+plot.spectrum(Nile, lab="Year", main="spectrum")
+```
+
+
+### Holt-Winters
+``` {r Holt-Winters}
+HW_Nile <- HoltWinters(Nile, beta=FALSE, gamma=FALSE)
+mygray <- "#80808080"
+plot(HW_Nile, main="Holt-Winters",
+     col=mygray, col.predicted="black", lty.predicted="dashed")
+```
+
+
+### Holt-Winters decomposed
+``` {r Holt-Winters decomp}
+HW_out <- HW_Nile
+HW_decomp <- ts.union(
+  y = HW_out$x,
+  Level = HW_out$fitted[, "level"],
+  Residuals = residuals(HW_out)
+)
+plot(HW_decomp, main = "Holt-Winters decomp")
+```
+
+
+### Autocorrelation for residuals
+```{r autocorrel for residuals}
+par(mar=c(4,4,3,1))
+acf(residuals(HW_Nile), main = "autocorrel for residuals")
+```
+
+
+## Modelling by Kalman filter
+used local level model.
+
+
+### Preprocess: specify model parameters
+```{r preprocess, echo = FALSE}
+library(dlm)
+```
+
+```{r modelling}
+mod <- dlmModPoly(order = 1)
+build_dlm <-function(par) {
+  mod$W[1, 1] <- exp(par[1])
+  mod$V[1, 1] <- exp(par[2])
+  return(mod)
+}
+
+lapply(list(c(0, 0), c(1, 10), c(20, 3)),
+       function(params) {
+         dlmMLE(y = Nile, parm = params, build = build_dlm)
+       })
+```
+
+```{r param estimation by MLE}
+fit_dlm <- dlmMLE(y = Nile, parm = c(0, 0),
+                  build =  build_dlm,
+                  hessian = TRUE)
+```
+
+* calculate (asymptotic) std error from Hessian by delta method
+```{r mle}
+exp(fit_dlm$par) * sqrt(diag(solve(fit_dlm$hessian)))
+```
+
+```{r set model}
+mod <- build_dlm(fit_dlm$par)
+mod
+```
+
+
+### Kalman filtering
+
+```{r filtering}
+dlm_filtering_obj <- dlmFilter(y = Nile, mod = mod)
+str(dlm_filtering_obj, max.level = 1)
+```
+
+```{r calc mean and stddev of filtering dist}
+m <- dropFirst(dlm_filtering_obj$m)
+m_sdev <- sqrt(
+  dropFirst(as.numeric(
+    dlmSvd2var(dlm_filtering_obj$U.C, dlm_filtering_obj$D.C)
+  ))
+)
+```
+
+```{r calc quantile of filtering dist}
+m_quant <- list(m + qnorm(0.025, sd = m_sdev),
+                m + qnorm(0.975, sd = m_sdev))
+```
+
+```{r plot result of filtering}
+ts.plot(cbind(Nile, m, do.call("cbind", m_quant)),
+        col = c("lightgray", "black", "black", "black"),
+        lty = c("solid", "solid", "dashed", "dashed"))
+legend(legend = c("observed", "mean of filtered", "95% interval of filtered"),
+       col = c("lightgray", "black", "black"),
+       lty = c("solid", "solid", "dashed"),
+       x = "topright", text.width = 24, cex= 0.6
+       )
+```
+
+### kalman forecasting
+```{r forecast}
+dlm_forecast_obj <- dlmForecast(
+  mod = dlm_filtering_obj,
+  nAhead = 10,
+  sampleNew = 10
+)
+str(dlm_forecast_obj, max.level = 1)
+```
+
+
+### calc mean and stddev of predict dist
+```{r calc mean and stddev of predict dist}
+a <- ts(data = dlm_forecast_obj$a, start = c(1971, 1))
+a_sdev <- sqrt(as.numeric(
+  dlm_forecast_obj$R
+))
+```
+
+
+### calc quantile of predict dist
+```{r calc quantile of predict dist}
+a_quant <- list(a + qnorm(0.025, sd = a_sdev),
+                a + qnorm(0.975, sd = a_sdev))
+```
+
+
+### plot result of forecast
+```{r plot forecast}
+ts.plot(cbind(Nile, a, do.call("cbind", a_quant)),
+        col = c("lightgray", "black", "black", "black"),
+        lty = c("solid", "solid", "dashed", "dashed"))
+legend(legend = c("observed", "mean of forecast", "95% interval of forecast"),
+       col = c("lightgray", "black", "black"),
+       lty = c("solid", "solid", "dashed"),
+       x = "topright", text.width = 28, cex= 0.6
+       )
+```
+
+
+### Kalman smoothing
+```{r smoothing}
+dlm_smoothing_obj <- dlmSmooth(
+  y = Nile,
+  mod = mod
+)
+str(dlm_smoothing_obj, max.level = 1)
+```
+
+
+### calc mean and stddev of smoothed dist
+```{r calc mean and stddev of smoothed dist}
+s <- dropFirst(dlm_smoothing_obj$s)
+s_sdev <- sqrt(dropFirst(
+  as.numeric(
+    dlmSvd2var(dlm_smoothing_obj$U.S,
+               dlm_smoothing_obj$D.S)
+  ))
+)
+```
+
+
+### calc quantile of smoothed dist
+```{r calc quantile of smoothed dist}
+s_quant <- list(s + qnorm(0.025, sd = s_sdev),
+                s + qnorm(0.975, sd = s_sdev))
+```
+
+
+### plot result of smoothed
+```{r plot smoothed}
+ts.plot(cbind(Nile, s, do.call("cbind", s_quant)),
+        col = c("lightgray", "black", "black", "black"),
+        lty = c("solid", "solid", "dashed", "dashed"))
+legend(legend = c("observed", "mean of forecast", "95% interval of forecast"),
+       col = c("lightgray", "black", "black"),
+       lty = c("solid", "solid", "dashed"),
+       x = "topright", text.width = 28, cex= 0.6
+       )
+```
+
+
+## Assesment of model
+
+### Likelihood
+```{r likelihood}
+dlmLL(y = Nile, mod = mod)
+```
+
+### Innovation
+
