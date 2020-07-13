@@ -1,7 +1,5 @@
 ---
 title: "KalmanFilterStudy"
-author: "Takumi Enomoto"
-date: "7/12/2020"
 output: html_document
 ---
 
@@ -236,4 +234,13 @@ dlmLL(y = Nile, mod = mod)
 ```
 
 ### Innovation
+```{r check autocorrelation for filtered}
+par(mar = c(4, 4, 3, 1))
+tsdiag(object = dlm_filtering_obj)
+```
 
+```{r check normalization}
+e <- residuals(object = dlm_filtering_obj, sd = FALSE)
+qqnorm(e)
+qqline(e)
+```
